@@ -1,0 +1,378 @@
+---
+title: "Microbiome analysis of oral and skin sites, and their connection to obesity"
+author: "Matthew Glittenberg"
+date: "March 1, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+setwd("C:/Users/mattg/OneDrive/Documents/BIOL3004/HMP Project Files")
+
+#Load Packages####
+library(dplyr) #for filtering
+library(ggplot2) #for plotting
+library(ape) #for PCoA
+library(vegan) #for PCoA
+library(reshape2) #for Taxa Summary
+library(plyr) #for Taxa Summary)
+install.packages("ggpubr")
+library(ggpubr) # for Statistical Testing
+library(robCompositions) # for Statistical Testing 
+
+#Loading and cleaning tables
+##Reading in Metadata and OTU Table
+
+###read metadata in as a table
+metadata = read.table('FUll_HMP_mapping_file.tsv', 
+                       header=T, 
+                       sep='\t', 
+                       check.names=FALSE, 
+                       comment='')
+
+###read rarefied otu table in as table
+otu.table = read.table("HMP_rarefied_table.tsv", 
+                        comment="", 
+                        header=F, 
+                        sep="\t",
+                        skip=1, 
+                        as.is=TRUE, 
+                        check.names=F)
+
+otu.table = data.frame(t(otu.table))
+
+###exporting and re-loading transposed otu table
+write.table(otu.table, file='otu_table.tsv', quote=FALSE, sep='\t', col.names = NA)
+
+otu.table = read.table("otutable.tsv", 
+                        comment="", 
+                        header=F, 
+                        sep="\t",
+                        skip=1, 
+                        as.is=TRUE, 
+                        check.names=F)
+
+###remove generic column in OTU table 
+otu.table = subset(otu.table, select = V1)
+
+###Match column one header of otu table with header of metadata
+colnames(otu.table)[1]
+colnames(otu.table)[1] = "SampleID"
+colnames(metadata)[1]
+
+##Loading Alpha Diversity Metric and Merging Tables
+
+###load shannon metric as table
+alpha = read.table("shannon_vector.tsv",
+                    sep='\t',
+                    header=TRUE,
+                    as.is=TRUE)
+
+###Match column one header of shannon metric table with header of metadata
+colnames(alpha)[1] = "SampleID"
+
+###Merge metadata and alpha diversity metric
+combined_alphadata = merge(metadata, alpha, by="SampleID")
+
+##Filtering data
+###Filter data to get obese and lean at skin body site
+keep_heavy_skin = filter(combined_alphadata, OBESITY == 'y' &
+                           HMPBODYSUPERSITE == 'Skin')
+keep_lean_skin = filter(combined_alphadata, OBESITY == 'n' & 
+                          HMPBODYSUPERSITE == 'Skin')
+skin_site = rbind(keep_heavy_skin, keep_lean_skin)
+
+###Filter data to get obese and lean at oral body site
+keep_heavy_oral = filter(combined_alphadata, OBESITY == 'y' &
+                           HMPBODYSUPERSITE == 'Oral')
+keep_lean_oral = filter(combined_alphadata, OBESITY == 'n' & 
+                          HMPBODYSUPERSITE == 'Oral')
+oral_site = rbind(keep_heavy_oral, keep_lean_oral)
+
+###combined data into data frame
+data = rbind(skin_site, oral_site)
+
+#Create Alpha Diversity plot
+
+###Make position vector for error bars
+pd = position_dodge(width = 0.5)
+
+ggplot(data=data, aes(x=OBESITY, y=shannon)) + 
+      stat_boxplot(geom="errorbar", position=pd, width=0.4) +
+      geom_boxplot() +
+      geom_jitter(width=0.1, aes(color=OBESITY)) +
+      theme_bw() +
+      scale_x_discrete(labels=c("lean", "obese")) +
+      guides(color=F) + facet_grid(.~ HMPBODYSUPERSITE) +
+      stat_compare_means(label="p.signif", 
+      comparisons = list(c("n", "y"))) + 
+      scale_color_viridis(discrete = TRUE, option = "D") +
+      scale_fill_viridis(discrete = TRUE)
+
+ggsave('Shannon_diversity_oral_skin.jpg')
+
+##Statistical testing for alpha diversity plot
+
+###shapiro test to determine if normal distribtuion of data is present
+obese_oral = data$HMPBODYSUPERSITE == 'Oral' & data$OBESITY == 'y'
+obese_oral = data[obese_oral,]
+shapiro.test(obese_oral$shannon)
+###plot histogram to determine if data is normally distributed
+hist(obese_oral$shannon)
+
+lean_oral = data$HMPBODYSUPERSITE == 'Oral' & data$OBESITY == 'n'
+lean_oral = data[lean_oral,]
+shapiro.test(lean_oral$shannon)
+###plot histogram to determine if data is normally distributed
+hist(lean_oral$shannon)
+
+obese_skin = data$HMPBODYSUPERSITE == 'Skin' & data$OBESITY == 'y'
+obese_skin = data[obese_skin,]
+shapiro.test(obese_skin$shannon)
+###plot histogram to determine if data is normally distributed
+hist(obese_skin$shannon)
+
+lean_skin = data$HMPBODYSUPERSITE == 'Skin' & data$OBESITY == 'n'
+lean_skin = data[lean_skin,]
+shapiro.test(lean_skin$shannon)
+###plot histogram to determine if data is normally distributed
+hist(lean_skin$shannon)
+
+###Use Wilcox Rank Sums test for non-paramtric data in 2 groups
+####lean oral and obese oral
+wilcox.test(obese_oral$shannon, lean_oral$shannon,  na.rm=TRUE)
+
+####lean_skin and obese skin
+wilcox.test(obese_skin$shannon, lean_skin$shannon,  na.rm=TRUE)
+
+#Create PCoA Beta Diversity Plot
+##Load Beta diversity table and create matrix
+
+###load beta diversity matrix as matrix
+beta = as.matrix(read.table("unweighted-distance-matrix.tsv"))
+
+###create data frame of diversity metric PCOA vectors 
+PCOA = data.frame(pcoa(beta)$vectors)
+
+new_names = rep("", ncol(PCOA))
+
+for(i in 1:ncol(PCOA)){
+  new_names[i] <- paste("PC",i, sep="")
+}
+names(PCOA) = new_names
+PCOA$SampleID = rownames(PCOA)
+
+###Merge PCOA and metadata into PCOA matrix
+PCOA = merge(PCOA, data, by="SampleID")
+
+##Plot PCoA
+
+plot = ggplot(PCOA_new) + 
+      geom_point(aes(x=PC1, y=PC2, color=OBESITY)) + 
+      labs(title="Human Microbiome Betadiversity") +
+      scale_color_viridis(discrete = TRUE, 
+      option="D" , name="Obesity Designator") + 
+      scale_fill_viridis(discrete=TRUE, name="Obesity Region") + 
+      stat_ellipse(alpha=0.3, geom="polygon", linetype="blank",
+      aes(x=PC1, y=PC2, fill=OBESITY)) + 
+      facet_grid(.~ HMPBODYSUPERSITE) + 
+      theme(plot.title = element_text(size=16),
+      axis.title = element_text(size=14), 
+      axis.text = element_text(size=12),      
+      legend.title = element_text(size=14),        
+      legend.text = element_text(size=12)) + theme_bw()
+
+##Testing for Significant Differences
+beta_dist = as.dist(beta)
+ad = adonis(beta_dist ~ combined_alphadata[,"HMPBODYSUPERSITE"], data_new=data, permutations=999)
+ad
+a.table <- ad$aov.tab
+
+###Write it to a text file
+write.table(a.table, file="beta_stats_analysis.txt", quote=FALSE, sep="\t", col.names = NA)
+
+#Create Taxonomy Plots
+##Load tables and create taxonomy metadata table 
+
+###load OTU Table
+otu.table2 = read.table("HMP_rarefied_table.tsv", 
+                         comment="", 
+                         header=T, 
+                         sep="\t",
+                         skip=1, 
+                         as.is=TRUE, 
+                         check.names=F)
+
+colnames(otu.table2)[1]
+colnames(otu.table2)[1] = "OTU_ID"
+colnames(otu.table2)[1]
+
+###Load Taxonomy Table
+
+taxon = read.table("97_otu_taxonomy.txt",
+                   comment="", 
+                  header=F, 
+                  sep="\t",
+                  as.is=TRUE, 
+                  check.names=F)
+
+colnames(taxon)[1]
+colnames(taxon)[1] = "OTU_ID"
+colnames(taxon)[1]
+
+###Merge OTU and Taxonomy Tables
+otum = merge(otu.table2, taxon, by="OTU_ID")
+
+colnames(otum)[ncol(otum)] 
+colnames(otum)[ncol(otum)] = "taxonomy"
+colnames(otum)[ncol(otum)] 
+
+###Create copy of merged file
+otum2 = otum
+
+###Specify level of taxa to use (5 = family)
+level = 2
+
+###Create array for taxa names
+names_split = array(dim=c(length(otum2$taxonomy), level)) 
+
+head(names_split)
+
+###stores taxonomy as a list of names
+otu_names = as.character(otum2$taxonomy)
+
+###Goes through each name and splits based on ';'
+for (i in 1:length(otu_names)){
+  names_split[i,] = head(strsplit(otu_names[i], "; ", fixed=T)[[1]], n=level)} 
+
+###combines the strings together into one string
+otu_names = apply(names_split, 1, function(x) paste(x[1:level], sep = "", collapse = ";"))
+head(otu_names)
+
+###Replace the old taxonomy with the shorter version, as a new table
+head(rownames(otum2))
+head(otum2)
+rownames(otum2) = otu.table2$"OTU_ID"
+head(rownames(otum2))
+otum2 = otum2[,-1]
+dim(otum2)
+head(otum2)
+
+###create file as final filtered version of table
+otum_filt3 = otum2
+otum_filt3$taxonomy = otu_names
+head(otum_filt3)
+
+###Get number of columns with samples (first is taxonomy)
+sample_no = ncol(otum_filt3) - 1
+sample_no
+
+###Combined otu table and save it as a new table 
+otum_filt4 = aggregate(otum_filt3[,1:sample_no], by=list(otum_filt3$taxonomy), FUN = sum)
+
+names(otum_filt4)[1] = "taxonomy"
+head(otum_filt4)
+
+rownames(otum_filt4) = otum_filt4$taxonomy
+otum_filt4 = otum_filt4[,!names(otum_filt4) == "taxonomy"]
+dim(otum_filt4)
+
+##filtering OTUs and Samples
+###Filters out low abundance OTU's, keeping only those present in 5% of samples
+otum_filt4[otum_filt4 < sum(colSums(otum_filt4))/1000000] = 0
+otum_filt4[otum_filt4 < 2] = 0
+otum_filt4 = otum_filt4[rowSums(otum_filt4 > 0) > (0.05*ncol(otum_filt4)),]
+
+###calculating relative abundances
+for(i in 1:ncol(otum_filt4)){
+  otum_filt4[,i] = otum_filt4[,i]/sum(otum_filt4[,i])
+}
+
+###Transpose to a data frame
+otum_filt4 = data.frame(t(otum_filt4))
+
+###Make a column that is the Sample IDs (which are the rownames)
+otum_filt4$SampleID = rownames(otum_filt4)
+
+###Make a backup of the filtered OTU table
+otu_backup = otum_filt4
+
+###Convert the data frame into 3 columns
+otum_filt4 = melt(otum_filt4, id.vars = "SampleID", 
+                  variable.name = "taxonomy", 
+                  value.name = "RelativeAbundance")
+
+###Merge metadata to taxa information
+meta_taxa = merge(otum_filt4, data, by="SampleID")
+
+##Taxa Summary Plot
+
+ggplot(meta_taxa, aes(x=OBESITY, y=RelativeAbundance, fill=taxanomy)) + 
+  geom_bar(stat ="identity", position="fill") +   scale_fill_viridis_d (option="D") +
+     facet_grid(.~HMPBODYSUPERSITE) +
+     scale_x_discrete(labels=c("Lean", "Obese"))
+
+##Differentiated OTU's
+taxonomy_table = otu.table2[,"Taxon",drop=F] 
+
+###Keep only the samples, drop taxonomy from table
+otum_filt4 = otum_filt4[, ! names(otum_filt4) == "taxonomy"] 
+
+###Filter OTUs that are in low abundance
+###Change those less than 1/1 millionth of read depth to 0
+otum_filt4[otum_filt4 < sum(colSums(otum_filt4))/1000000] = 0
+
+###Change singletons to 0 (needed for low depth OTU tables)
+otum_filt4[otum_filt4 < 2] = 0
+
+###Filter the OTU table to keep OTUs in at least 5% of samples
+otum_filt4 = otum_filt4[rowSums(otum_filt4 > 0) > (0.05*ncol(otum_filt4)),]
+
+otum_filt4[otum_filt4 == 0] = 0.65
+filt_otu_table = t(otum_filt4)
+filt_otu_table = cenLR(filt_otu_table)$x.clr
+
+##statistical Test For Differences
+
+this_taxa = taxonomy_table[colnames(otu_table)[1],"taxonomy"]
+this_taxa
+dim(filt_otu_table)
+
+aov_test = aov(otu_table[,1] ~ combined_alphadata$BodySite)
+
+###plot for a chosen taxa
+
+plot_table = data.frame(filt_otu_table)
+
+plot_table$OBESITY = combined_alphadata$OBESITY
+filt_plot_table = plot_table[!(plot_table$OBESITY == "None"),] 
+
+###store which column (header) you want to plot 
+this_otu = colnames(plot_table)[1]
+name = strsplit(this_taxa, ";", fixed=T)[[1]]
+names_tail = tail(name, n=2)
+
+ggplot(filt_plot_table3) + 
+      geom_boxplot(aes_string(x="OBESITY", y=this_otu, 
+      fill="OBESITY")) + scale_fill_viridis(discrete=TRUE) +
+      scale_x_discrete(labels=c("lean", "obese")) + 
+      labs(y=names_tail) + theme_classic()
+
+
+
+
+
+##anova test for all taxa
+pvals = c()
+for(i in 1:(ncol(plot_table)-1)){
+  aov_out = aov(plot_table[,i] ~ plot_table$BodySite)
+  pvals[i] = summary(aov_out)[[1]][1,5]
+}
+
+sum(pvals < 0.05)
+
+pvals.fdr = p.adjust(pvals, "fdr")
+
+sum(pvals.fdr < 0.05)
